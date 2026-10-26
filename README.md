@@ -75,3 +75,26 @@ Protocol SDK is pinned to MeshLLM commit
 - [Upstream API](https://github.com/carloslfu/slotstream/blob/main/docs/API.md): `/v1/models`, chat streaming and tools.
 - [Mesh plugin contract](https://github.com/Mesh-LLM/mesh-llm/blob/d9c6e5a2ff3143c2c9161236bf24d415c403b9ca/mesh/docs/plugins/README.md): inference endpoint registration.
 - Initial adapter structure derives from Mesh-LLM/flash-moe (Apache-2.0).
+
+### Opt-in real-runtime check
+
+With Slotstream and its model already installed:
+
+```sh
+SLOTSTREAM_E2E_BINARY=/absolute/path/to/slotstream \
+SLOTSTREAM_E2E_MODEL_DIR=/absolute/path/to/downloaded/model \
+cargo test --test protocol -- --ignored --nocapture
+```
+
+This launches the real plugin executable and speaks the Mesh plugin protocol over
+an isolated Unix socket, initializes its managed endpoint, waits for model discovery,
+checks nonempty chat and streaming answers, then verifies shutdown removes the owned
+endpoint. It uses a 22 GB budget and a 32K context window. It does not launch a full
+MeshLLM host or prove cross-peer routing.
+
+Validated with upstream release **0.2.30**, release archive SHA-256 verified,
+and its hash-verified original `qwen3.8-flash-next:4bit` pack. Both normal and
+streaming requests to say hello returned `hello`; the managed runtime loaded in
+2.1 seconds in that run. These are smoke results, **not throughput benchmarks**.
+The earlier statement that tests do not prove real inference refers to the default,
+weights-free suite; the opt-in test above was run separately against real weights.
