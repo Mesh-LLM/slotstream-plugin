@@ -6,6 +6,46 @@ Slotstream runs on Apple Silicon/macOS 14+; install it and download its model
 **separately** before using managed mode. The plugin does not run installers,
 `pull`, `launch`, or `stop`, and starts the backend with closed stdin.
 
+## Features
+
+- **Managed or attached runtime:** launch and supervise one owned `slotstream serve`
+  child, or attach to an existing OpenAI-compatible Slotstream endpoint.
+- **Mesh integration:** register the backend with the Mesh plugin protocol; Mesh
+  handles model discovery, endpoint health and inference routing. Requests go to
+  the backend HTTP API, not through plugin IPC.
+- **Explicit resource control:** pass supported memory/context options to the
+  runtime. No automatic installers, model downloads, or changes to mesh core.
+- **Safe ownership boundaries:** attach mode never stops your server; managed
+  shutdown only stops the child this plugin created.
+- **Chat and streaming smoke-tested:** real Slotstream 0.2.30 with the original
+  Qwen3.8-Flash-Next 4-bit pack. Tool and vision support remain upstream features,
+  not independently validated adapter guarantees.
+
+## How SSD-backed inference works
+
+**Slotstream does the inference and SSD streaming; this plugin is the control-plane
+adapter, not a new model engine.** Slotstream is a native Swift runtime using
+Apple MLX and Metal. Its Qwen3.8-Flash-Next mixture-of-experts model selects only
+some experts for each token, so the entire roughly 105 GB model need not reside
+in unified memory at once.
+
+As described in [upstream engineering documentation](https://github.com/carloslfu/slotstream/blob/main/docs/ENGINEERING.md#how-it-works),
+the original model contains about 68 GB of routed experts, a 32 GB n-gram lookup
+table and a 3.8 GB shared component. Slotstream keeps the shared component in RAM
+and reads experts from SSD into a bounded cache-slot pool shared across 48 layers.
+More RAM can retain more experts and reduce SSD reads; expert lookahead can
+prefetch upcoming work. This trades SSD bandwidth and latency for a smaller
+resident weight footprint—it does not make disk as fast as RAM or eliminate
+KV-cache/context memory requirements.
+
+Upstream currently lists Apple Silicon, macOS 14+, at least 16 GB RAM and about
+110 GB free SSD space for the original pack. Check its
+[hardware guide](https://github.com/carloslfu/slotstream/blob/main/docs/HARDWARE.md)
+for current requirements. Model packs, memory budgets, prompt length, filesystem
+cache and SSD speed affect performance. This repository does **not** claim a
+throughput benchmark; the validated 22 GB budget below is a smoke configuration,
+not a recommendation for every Mac. No weights or upstream binaries are bundled.
+
 ## Build and configure
 
 ```sh
