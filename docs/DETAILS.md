@@ -138,3 +138,22 @@ streaming requests to say hello returned `hello`; the managed runtime loaded in
 2.1 seconds in that run. These are smoke results, **not throughput benchmarks**.
 The earlier statement that tests do not prove real inference refers to the default,
 weights-free suite; the opt-in test above was run separately against real weights.
+
+## Bundled runtime (next release)
+
+The archive now includes upstream Slotstream 0.2.30, `mlx.metallib`, upstream
+build identity/source and license notices. No separate engine install is needed.
+The connector resolves the sibling runtime, while `--backend-command` and URL
+attach mode remain available.
+
+An explicit top-level `--model <id>` runs upstream `pull <id>` before `serve`;
+a directory uses existing weights without pulling. Downloads reuse upstream's
+cache, resume/hash checks and licenses. `--pull-model <id>` downloads without
+starting the plugin. No model flag means no automatic download. Normal shutdown
+retains weights and stops only the owned runtime.
+
+2026-10-29: extracted archive connector, without `--backend-command`, initialized
+over Mesh's Unix-socket protocol, launched its sibling runtime using the existing
+Qwen 4-bit model directory, returned `hello` in normal and streaming chat, and
+removed its endpoint on shutdown. This does not exercise stock Mesh installation
+or remote-peer routing. No fresh 100 GB download was performed for this check.

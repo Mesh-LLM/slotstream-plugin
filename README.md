@@ -9,8 +9,7 @@ That lets you run a model whose weights would not all fit in RAM, at the cost of
 waiting for disk reads.
 
 This plugin connects that local Slotstream server to MeshLLM. It can start the
-server for you or connect to one you already run. **The download is just the
-connector: install Slotstream and its model separately.**
+server for you or connect to one you already run. **The release includes the connector, Slotstream 0.2.30 and its Metal runtime. Model weights download separately.**
 
 ## Install
 
@@ -28,11 +27,18 @@ Install the adapter with Mesh's GitHub installer:
 mesh-llm plugins install Mesh-LLM/slotstream-plugin
 ```
 
-**Install Slotstream and download its model separately**, following its upstream
-instructions (macOS 14+). The package includes only our adapter, not Slotstream or
-weights. It never downloads models automatically. Binaries are ad-hoc signed,
-**not notarized**; macOS may require approval before running downloaded code.
-A checksum verifies integrity, not Apple trust.
+The next bundled release needs no separate Slotstream installation. **v0.1.0 is
+adapter-only**; until the bundled release is published, use a source/package build
+or install Slotstream separately.
+
+Model weights are not bundled. An explicit `--model` choice below authorizes the
+upstream resumable, hash-verified download on startup (about 100 GB for the tested
+4-bit pack). Cached weights are reused and retained in `~/.slotstream/models`
+when Mesh stops or the plugin is removed. An existing model directory skips the
+download. Starting without `--model` never initiates a download.
+
+Requires Apple Silicon and macOS 14+. Binaries are signed, **not notarized**;
+macOS may require approval. A checksum verifies integrity, not Apple trust.
 
 ## Configure
 
@@ -42,11 +48,10 @@ Add to `~/.mesh-llm/config.toml` (use absolute paths):
 [[plugin]]
 name = "slotstream-plugin"
 command = "/absolute/path/slotstream-plugin/slotstream-plugin"
-args = ["--backend-command", "/absolute/path/to/slotstream", "--", "--memory-gb", "22"]
+args = ["--model", "qwen3.8-flash-next:4bit", "--", "--memory-gb", "22"]
 ```
 
-If installed with the Mesh CLI, omit `command`. Installation alone does not
-configure the backend. The memory option above was tested with Slotstream 0.2.30;
+If installed with the Mesh CLI, omit `command`. Keep the runtime and `mlx.metallib` beside the connector. To use another installation, pass `--backend-command /path/to/slotstream` before `--`. The memory option above was tested with Slotstream 0.2.30;
 choose options supported by your installed version and hardware.
 
 Run `mesh-llm serve`, then check `http://127.0.0.1:9337/v1/models` and use an
@@ -86,5 +91,8 @@ The GitHub workflow tests and packages on PRs, main and manual dispatch. Matchin
 `vX.Y.Z` tags publish the same tested archive plus SHA-256 checksum to Releases;
 manual dispatch produces artifacts only. Maintainers can reproduce packaging on
 Apple Silicon with Rust 1.99.0 using `bash scripts/package-macos.sh`. It signs,
-checks and smokes the extracted binary, then cleans Cargo output. No models,
-Keychain credentials or Apple signing secrets are used.
+checks and smokes the extracted binary, then cleans Cargo output. No model weights, Keychain credentials or Apple signing secrets are used.
+
+Bundled runtime provenance: upstream v0.2.30, source `924442a2100a02caf5e2047dd67234a119e228dc`, archive SHA-256 `e7a3e6532ae0931ea3538abe1974dead0fc741d9d8a529e1f02517b7ac78335c`. Upstream MIT and third-party notices are in `licenses/slotstream/`; original build identity and source archive are retained.
+
+For an explicit download without starting Mesh, run the extracted `slotstream-plugin --pull-model qwen3.8-flash-next:4bit`.
