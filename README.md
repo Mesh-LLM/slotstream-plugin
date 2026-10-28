@@ -66,17 +66,7 @@ normal shutdown; forced termination may leave that child running.
 
 ## Status
 
-**What we actually tried:** Slotstream 0.2.30 with the original
-Qwen3.8-Flash-Next 4-bit pack, using a 22 GB memory budget and a 32K context
-window. The plugin started the server; normal and streaming chat both returned
-`hello`; shutting down the plugin removed its owned endpoint. The model pack
-needs roughly 110 GB of SSD space.
-
-This was a local smoke test, not a speed benchmark or a full Mesh deployment.
-**Full Mesh host/remote-peer routing, tool/vision support and throughput have not
-been independently validated.** The published release download is being checked
-separately; the earlier inference test does not certify every release artifact.
-See [details and reproducible checks](docs/DETAILS.md).
+Experimental. See [tested setup and verification notes](docs/DETAILS.md#verification-and-limits).
 
 ## Build and release
 
