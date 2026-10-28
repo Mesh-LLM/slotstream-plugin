@@ -1,14 +1,16 @@
 # Slotstream plugin for MeshLLM
 
 Use [Slotstream](https://github.com/carloslfu/slotstream) as a MeshLLM inference
-backend on an **Apple Silicon Mac**. The plugin starts and supervises Slotstream,
-or attaches to a server you already run. Mesh handles discovery and routing.
+backend on an **Apple Silicon Mac**.
 
-**Why Slotstream?** It streams selected mixture-of-experts weights from SSD into
-a bounded RAM cache, so the whole model need not fit in memory. More cache means
-fewer disk reads. SSD speed and prompt length affect performance; this is not
-RAM-speed inference. The original tested pack needs roughly **110 GB free SSD**.
-Slotstream—not this plugin—implements the inference engine.
+Slotstream runs large mixture-of-experts language models by keeping their weights
+on SSD and loading the experts needed for each token into a limited RAM cache.
+That lets you run a model whose weights would not all fit in RAM, at the cost of
+waiting for disk reads.
+
+This plugin connects that local Slotstream server to MeshLLM. It can start the
+server for you or connect to one you already run. **The download is just the
+connector: install Slotstream and its model separately.**
 
 ## Install
 
