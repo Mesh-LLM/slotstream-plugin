@@ -22,7 +22,7 @@ shasum -a 256 -c slotstream-plugin-aarch64-apple-darwin.tar.gz.sha256
 tar xzf slotstream-plugin-aarch64-apple-darwin.tar.gz
 ```
 
-After a release is published, Mesh's GitHub installer can also install the adapter:
+Install the adapter with Mesh's GitHub installer:
 
 ```sh
 mesh-llm plugins install Mesh-LLM/slotstream-plugin
