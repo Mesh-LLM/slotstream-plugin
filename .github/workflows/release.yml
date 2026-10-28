@@ -1,0 +1,68 @@
+name: macOS package
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - name: Verify full package
+        run: |
+          export PATH="$HOME/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH"
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          grep -qx "version = \"$v\"" Cargo.toml
+          grep -qx "version = \"$v\"" plugin.toml
+      - name: Build, sign, package and smoke extracted archive
+        run: |
+          export PATH="$HOME/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH"
+          bash scripts/package-macos.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: slotstream-plugin-macos
+          if-no-files-found: error
+          path: dist/slotstream-plugin-aarch64-apple-darwin.tar.gz*
+      - name: Clean
+        if: always()
+        run: rustup run 1.99.0 cargo clean
+  publish:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: slotstream-plugin-macos
+          path: dist
+      - name: Publish exact tested archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          sha256sum -c ./*.sha256
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Slotstream plugin $GITHUB_REF_NAME" \
+            --notes 'Apple Silicon adapter only. Install Slotstream and weights separately. Ad-hoc signed, not notarized. See README for setup.' \
+            ./*.tar.gz ./*.sha256
