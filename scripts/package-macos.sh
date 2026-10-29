@@ -36,6 +36,9 @@ codesign --verify --strict "$stage/extracted/slotstream-plugin/slotstream-plugin
 "$stage/extracted/slotstream-plugin/slotstream-plugin" --help > /dev/null
 "$stage/extracted/slotstream-plugin/slotstream" --version
 "$stage/extracted/slotstream-plugin/slotstream" pull --help > /dev/null
-"$stage/extracted/slotstream-plugin/slotstream" doctor --memory-gb 22 > /dev/null
+# Validate the planner deterministically, not the runner's ability to host a
+# large model. Upstream's what-if mode needs no weights or GPU allocation.
+"$stage/extracted/slotstream-plugin/slotstream" doctor --memory-gb 22 \
+    --sim-ram 32 --sim-working-set 24 --sim-available 32 > /dev/null
 # Safe smoke: attach mode must not spawn a backend. Full protocol test runs in CI.
 grep -qx 'command = "slotstream-plugin"' "$stage/extracted/slotstream-plugin/plugin.toml"

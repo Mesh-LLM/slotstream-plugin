@@ -64,5 +64,5 @@ jobs:
           cd dist
           sha256sum -c ./*.sha256
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "Slotstream plugin $GITHUB_REF_NAME" \
-            --notes 'Apple Silicon adapter only. Install Slotstream and weights separately. Ad-hoc signed, not notarized. See README for setup.' \
+            --notes 'Apple Silicon connector with pinned Slotstream runtime and Metal resources. Choose a model explicitly to download weights. Ad-hoc signed, not notarized. See README for setup.' \
             ./*.tar.gz ./*.sha256
