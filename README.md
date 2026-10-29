@@ -27,9 +27,7 @@ Install the adapter with Mesh's GitHub installer:
 mesh-llm plugins install Mesh-LLM/slotstream-plugin
 ```
 
-The next bundled release needs no separate Slotstream installation. **v0.1.0 is
-adapter-only**; until the bundled release is published, use a source/package build
-or install Slotstream separately.
+No separate Slotstream installation is needed.
 
 Model weights are not bundled. An explicit `--model` choice below authorizes the
 upstream resumable, hash-verified download on startup (about 100 GB for the tested
