@@ -49,7 +49,10 @@ async fn initialize(stream: &mut LocalStream) -> Result<String> {
 }
 
 fn plugin_command(socket: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mesh-slotstream"));
+    let mut command = Command::new(
+        std::env::var("SLOTSTREAM_TEST_PLUGIN")
+            .unwrap_or_else(|_| env!("CARGO_BIN_EXE_mesh-slotstream").to_string()),
+    );
     command
         .env("MESH_LLM_PLUGIN_ENDPOINT", socket)
         .env("MESH_LLM_PLUGIN_TRANSPORT", "unix")
@@ -109,10 +112,12 @@ async fn real_slotstream_managed_inference() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let socket = dir.path().join("host.sock");
     let listener = UnixListener::bind(&socket)?;
-    let mut child = plugin_command(&socket)
+    let mut command = plugin_command(&socket);
+    if binary != "bundled" {
+        command.args(["--backend-command", &binary]);
+    }
+    let mut child = command
         .args([
-            "--backend-command",
-            &binary,
             "--",
             "--model",
             &model,
@@ -216,5 +221,63 @@ async fn real_slotstream_managed_inference() -> Result<()> {
     })
     .await
     .context("managed endpoint teardown")?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_pull_forwards_model_and_failure_without_serving() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir()?;
+    let backend = dir.path().join("backend");
+    let receipt = dir.path().join("args");
+    std::fs::write(
+        &backend,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RECEIPT\"\nexit 7\n",
+    )?;
+    std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o700))?;
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_mesh-slotstream"))
+        .env("RECEIPT", &receipt)
+        .args([
+            "--backend-command",
+            backend.to_str().unwrap(),
+            "--pull-model",
+            "fixture-model",
+        ])
+        .status()?;
+    assert_eq!(status.code(), Some(7));
+    assert_eq!(std::fs::read_to_string(receipt)?, "pull\nfixture-model\n");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_model_download_failure_does_not_start_server() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir()?;
+    let backend = dir.path().join("backend");
+    let receipt = dir.path().join("args");
+    std::fs::write(
+        &backend,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$RECEIPT\"\nexit 7\n",
+    )?;
+    std::fs::set_permissions(&backend, std::fs::Permissions::from_mode(0o700))?;
+    let socket = dir.path().join("host.sock");
+    let listener = UnixListener::bind(&socket)?;
+    let mut child = plugin_command(&socket)
+        .env("RECEIPT", &receipt)
+        .args([
+            "--backend-command",
+            backend.to_str().unwrap(),
+            "--model",
+            "fixture-model",
+        ])
+        .spawn()?;
+    let (stream, _) = timeout(Duration::from_secs(10), listener.accept()).await??;
+    let mut stream = LocalStream::Unix(stream);
+    let _ = initialize(&mut stream).await;
+    let status = timeout(Duration::from_secs(10), child.wait()).await??;
+    assert!(!status.success());
+    assert_eq!(std::fs::read_to_string(receipt)?, "pull\nfixture-model\n");
     Ok(())
 }

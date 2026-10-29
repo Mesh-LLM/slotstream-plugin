@@ -13,7 +13,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PLUGIN_ID: &str = "slotstream";
 const ENDPOINT_ID: &str = "slotstream";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(1);
-const INSTALL_HINT: &str = "Install Slotstream separately and pass \
+const INSTALL_HINT: &str = "Keep the bundled slotstream and mlx.metallib beside this executable, or pass \
                            `--backend-command <path-to-slotstream> -- <backend args...>`, \
                            or configure `url` for an already-running Slotstream /v1 endpoint.";
 
@@ -23,6 +23,12 @@ struct Args {
     url: Option<String>,
     #[arg(long)]
     backend_command: Option<String>,
+    /// Explicitly download a model using the bundled upstream downloader, then exit.
+    #[arg(long, conflicts_with = "url")]
+    pull_model: Option<String>,
+    /// Model ID to download explicitly through upstream before serving, or an existing directory.
+    #[arg(long, conflicts_with_all = ["url", "pull_model"])]
+    model: Option<String>,
     #[arg(last = true)]
     backend_args: Vec<String>,
 }
@@ -42,10 +48,11 @@ enum SlotstreamSource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SlotstreamConfig {
     source: SlotstreamSource,
+    download_model: Option<String>,
 }
 
 impl SlotstreamConfig {
-    fn from_args(args: Args) -> Result<Self> {
+    fn from_args(mut args: Args) -> Result<Self> {
         let command = args
             .backend_command
             .map(|value| value.trim().to_string())
@@ -60,19 +67,39 @@ impl SlotstreamConfig {
         if url.is_some() && !args.backend_args.is_empty() {
             bail!("backend args cannot be used with --url");
         }
+        let download_model = args
+            .model
+            .clone()
+            .filter(|model| !std::path::Path::new(model).is_dir());
         if let Some(base_url) = url {
             return Ok(Self {
+                download_model: None,
                 source: SlotstreamSource::External {
                     base_url: normalize_base_url(&base_url)?,
                 },
             });
         }
-        let command = command.with_context(|| {
+        let command = command.or_else(bundled_command).with_context(|| {
             format!("slotstream plugin requires --backend-command or --url. {INSTALL_HINT}")
         })?;
+        if let Some(model) = args.model {
+            if model.trim().is_empty() || model.starts_with('-') {
+                bail!("--model requires a nonempty model ID or directory");
+            }
+            if args
+                .backend_args
+                .iter()
+                .any(|arg| arg == "--model" || arg.starts_with("--model="))
+            {
+                bail!("pass --model once, before the serve options");
+            }
+            args.backend_args
+                .splice(0..0, ["--model".to_string(), model]);
+        }
         managed_command_args(&args.backend_args, 1)?;
         let port = allocate_local_port().context("allocate slotstream endpoint port")?;
         Ok(Self {
+            download_model,
             source: SlotstreamSource::Managed {
                 command,
                 args: args.backend_args,
@@ -125,6 +152,20 @@ impl SlotstreamState {
             }
         }
 
+        if let Some(model) = &self.config.download_model {
+            let status = Command::new(command)
+                .args(["pull", model])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .status()
+                .await
+                .context("download explicitly selected Slotstream model")?;
+            if !status.success() {
+                bail!("Slotstream model download failed: {status}");
+            }
+        }
         let managed_args = managed_command_args(args, *port)?;
         let mut command_builder = Command::new(command);
         command_builder.args(&managed_args);
@@ -200,6 +241,18 @@ fn normalize_base_url(value: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
+fn bundled_command() -> Option<String> {
+    let executable = std::env::current_exe().ok()?;
+    sibling_command(&executable)
+}
+
+fn sibling_command(executable: &std::path::Path) -> Option<String> {
+    let sibling = executable.parent()?.join("slotstream");
+    sibling
+        .is_file()
+        .then(|| sibling.to_string_lossy().into_owned())
+}
+
 fn allocate_local_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
@@ -245,7 +298,7 @@ fn build_plugin_from_config(
                 Some(
                     "Configure [[plugin]] name = \"slotstream\" with url for an \
                      already-running endpoint, or plugin args for a managed \
-                     Slotstream process. Slotstream itself is installed separately.",
+                     Slotstream process. Release packages include the Slotstream runtime.",
                 ),
             ),
         ),
@@ -281,6 +334,27 @@ async fn run_plugin(name: String, args: Args) -> Result<()> {
 
 pub fn run_main() -> i32 {
     let args = Args::parse();
+    if let Some(model) = &args.pull_model {
+        if model.trim().is_empty() || model.starts_with('-') || !args.backend_args.is_empty() {
+            eprintln!("--pull-model requires a model ID and no serve options");
+            return 1;
+        }
+        let command = args.backend_command.clone().or_else(bundled_command);
+        let Some(command) = command else {
+            eprintln!("{INSTALL_HINT}");
+            return 1;
+        };
+        return match std::process::Command::new(command)
+            .args(["pull", model])
+            .status()
+        {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(error) => {
+                eprintln!("start upstream model download: {error}");
+                1
+            }
+        };
+    }
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.enable_all();
     let runtime = builder.build().expect("build tokio runtime");
@@ -304,6 +378,8 @@ mod tests {
 
     fn args(url: Option<&str>, backend_command: Option<&str>, backend_args: &[&str]) -> Args {
         Args {
+            model: None,
+            pull_model: None,
             url: url.map(str::to_string),
             backend_command: backend_command.map(str::to_string),
             backend_args: backend_args.iter().map(|arg| (*arg).to_string()).collect(),
@@ -319,6 +395,7 @@ mod tests {
         std::fs::write(&script, "#!/bin/sh\nexec /bin/sleep 60\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
         let state = SlotstreamState::new(SlotstreamConfig {
+            download_model: None,
             source: SlotstreamSource::Managed {
                 command: script.to_string_lossy().into_owned(),
                 args: vec![],
@@ -353,12 +430,51 @@ mod tests {
     #[tokio::test]
     async fn attached_endpoint_never_spawns_a_process() {
         let state = SlotstreamState::new(SlotstreamConfig {
+            download_model: None,
             source: SlotstreamSource::External {
                 base_url: "http://localhost:11434/v1".into(),
             },
         });
         state.ensure_started().await.unwrap();
         assert!(state.child.lock().await.is_none());
+    }
+
+    #[test]
+    fn explicit_model_authorizes_download_but_existing_directory_does_not() {
+        let mut selected = args(None, Some("/fixture/slotstream"), &[]);
+        selected.model = Some("qwen3.8-flash-next:4bit".into());
+        let config = SlotstreamConfig::from_args(selected).unwrap();
+        assert_eq!(
+            config.download_model.as_deref(),
+            Some("qwen3.8-flash-next:4bit")
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let mut existing = args(None, Some("/fixture/slotstream"), &[]);
+        existing.model = Some(dir.path().to_string_lossy().into_owned());
+        assert!(
+            SlotstreamConfig::from_args(existing)
+                .unwrap()
+                .download_model
+                .is_none()
+        );
+        assert!(
+            SlotstreamConfig::from_args(args(None, Some("/fixture/slotstream"), &[]))
+                .unwrap()
+                .download_model
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn bundled_runtime_is_resolved_relative_to_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("slotstream-plugin");
+        assert!(sibling_command(&executable).is_none());
+        std::fs::write(dir.path().join("slotstream"), "fixture").unwrap();
+        assert_eq!(
+            sibling_command(&executable),
+            Some(dir.path().join("slotstream").to_string_lossy().into_owned())
+        );
     }
 
     #[test]
@@ -425,7 +541,7 @@ mod tests {
             .expect_err("slotstream requires a managed command or attached endpoint");
         let message = err.to_string();
 
-        assert!(message.contains("Install Slotstream separately"));
+        assert!(message.contains("Keep the bundled slotstream"));
         assert!(message.contains("--backend-command"));
         assert!(message.contains("--url"));
     }
@@ -433,6 +549,7 @@ mod tests {
     #[tokio::test]
     async fn managed_start_failure_explains_external_install_boundary() {
         let state = SlotstreamState::new(SlotstreamConfig {
+            download_model: None,
             source: SlotstreamSource::Managed {
                 command: "/definitely/missing/slotstream/infer".to_string(),
                 args: Vec::new(),
@@ -446,7 +563,7 @@ mod tests {
             .expect_err("missing external slotstream binary must fail")
             .to_string();
 
-        assert!(message.contains("Install Slotstream separately"));
+        assert!(message.contains("Keep the bundled slotstream"));
         assert!(message.contains("/definitely/missing/slotstream/infer"));
     }
 
@@ -455,6 +572,7 @@ mod tests {
         let plugin = build_plugin_from_config(
             "slotstream".to_string(),
             SlotstreamConfig {
+                download_model: None,
                 source: SlotstreamSource::Managed {
                     command: "/opt/slotstream/infer".to_string(),
                     args: vec!["--model".to_string(), "/models/qwen3.5".to_string()],
@@ -486,6 +604,7 @@ mod tests {
         let plugin = build_plugin_from_config(
             "slotstream".to_string(),
             SlotstreamConfig {
+                download_model: None,
                 source: SlotstreamSource::External {
                     base_url: "http://127.0.0.1:8000/v1".to_string(),
                 },
